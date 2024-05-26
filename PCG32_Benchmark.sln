@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.9.34728.123
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "PCG32_Benchmark", "PCG32_Benchmark\PCG32_Benchmark.vcxproj", "{AA5A9948-C40B-47F0-A303-07895D70FCAE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{AA5A9948-C40B-47F0-A303-07895D70FCAE}.Debug|x64.ActiveCfg = Debug|x64
+		{AA5A9948-C40B-47F0-A303-07895D70FCAE}.Debug|x64.Build.0 = Debug|x64
+		{AA5A9948-C40B-47F0-A303-07895D70FCAE}.Release|x64.ActiveCfg = Release|x64
+		{AA5A9948-C40B-47F0-A303-07895D70FCAE}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {AD8E8328-4629-4FDC-82CF-AEC2866F3A0D}
+	EndGlobalSection
+EndGlobal
