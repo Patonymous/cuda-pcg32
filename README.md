@@ -5,9 +5,10 @@ CUDA implementation of minimal PCG32 PRNG standard with benchmarks
 ## Compile
 
 ```
-nvcc -O3 main.cpp benchmarks.cu -o benchmark.exe
+nvcc -O3 -std=c++11 main.cpp benchmarks.cu -o benchmark.exe
 ```
-You may need to add: `--ccbin <path to x64 compiler directory>`  
+You may need to add: `--ccbin <path to x64 compiler directory>` or `-D_FORCE_INLINES`
+
 Or simply use VisualStudio
 
 ## Run
@@ -25,4 +26,4 @@ Especially when using `--checks` execution will take **MUCH** longer and also al
 since after each kernel run results will be copied from device to host and CPU will check generated random numbers.  
 Running benchmark with `--checks` but without reduced `--numbers-max` will probably take longer than you're willing to wait.
 
-The program can always be stopped with Ctrl-C and benchmark results gathered up to that point will not be lost.
+The program can always be stopped with Ctrl-C and benchmark results gathered up to that point should not be lost.
