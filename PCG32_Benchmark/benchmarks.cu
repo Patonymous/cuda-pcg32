@@ -7,10 +7,12 @@ __device__ uint64_t dev_next_state;
 __constant__ uint64_t dev_const_mul[64];
 __constant__ uint64_t dev_const_inc[64];
 
-__global__ void throughput(uint32_t* const dev_arr, pcg32_random_t seed);
-__global__ void throughput_vec(uint32_t* const dev_arr, pcg32_random_t seed);
-__global__ void multilinear(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers);
-__global__ void multilinear_vec(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers);
+__global__ void throughput_scal(uint32_t* const dev_arr, pcg32_random_t seed);
+__global__ void throughput_vec2(uint32_t* const dev_arr, pcg32_random_t seed);
+__global__ void throughput_vec4(uint32_t* const dev_arr, pcg32_random_t seed);
+__global__ void multilinear_scal(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers);
+__global__ void multilinear_vec2(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers);
+__global__ void multilinear_vec4(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers);
 
 void initialize_constants()
 {
@@ -28,37 +30,49 @@ void initialize_constants()
 	CTE(cudaMemcpyToSymbol(dev_const_inc, incs, 64 * sizeof(uint64_t)));
 }
 
-statistics benchmark_throughput(const parameters& params)
+statistics benchmark_throughput_scal(const parameters& params)
 {
 	cuda_timer timer;
     statistics stats;
     stats.blocks = params.numbers / params.threads_per_block;
 	timer.start();
-    throughput<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed);
+    throughput_scal<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed);
 	CTE(cudaGetLastError());
 	timer.end();
 	stats.calculation_time = timer.wait_and_get_elapsed_time();
 	return stats;
 }
-statistics benchmark_throughput_vec(const parameters& params)
+statistics benchmark_throughput_vec2(const parameters& params)
+{
+	cuda_timer timer;
+	statistics stats;
+	stats.blocks = (params.numbers / params.threads_per_block) / 2;
+	timer.start();
+	throughput_vec2<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed);
+	CTE(cudaGetLastError());
+	timer.end();
+	stats.calculation_time = timer.wait_and_get_elapsed_time();
+	return stats;
+}
+statistics benchmark_throughput_vec4(const parameters& params)
 {
 	cuda_timer timer;
 	statistics stats;
 	stats.blocks = (params.numbers / params.threads_per_block) / 4;
 	timer.start();
-	throughput_vec<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed);
+	throughput_vec4<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed);
 	CTE(cudaGetLastError());
 	timer.end();
 	stats.calculation_time = timer.wait_and_get_elapsed_time();
 	return stats;
 }
-statistics benchmark_multilinear(const parameters& params)
+statistics benchmark_multilinear_scal(const parameters& params)
 {
 	cuda_timer timer;
 	statistics stats;
 	stats.blocks = params.total_threads / params.threads_per_block;
 	timer.start();
-	multilinear<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed, bfind(params.total_threads), params.numbers);
+	multilinear_scal<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed, bfind(params.total_threads), params.numbers);
 	CTE(cudaGetLastError());
 	timer.end();
 	stats.calculation_time = timer.wait_and_get_elapsed_time();
@@ -66,13 +80,27 @@ statistics benchmark_multilinear(const parameters& params)
 	stats.next_seed.inc = params.seed.inc;
 	return stats;
 }
-statistics benchmark_multilinear_vec(const parameters& params)
+statistics benchmark_multilinear_vec2(const parameters& params)
 {
 	cuda_timer timer;
 	statistics stats;
 	stats.blocks = params.total_threads / params.threads_per_block;
 	timer.start();
-	multilinear_vec<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed, bfind(params.total_threads), params.numbers);
+	multilinear_vec2<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed, bfind(params.total_threads), params.numbers);
+	CTE(cudaGetLastError());
+	timer.end();
+	stats.calculation_time = timer.wait_and_get_elapsed_time();
+	CTE(cudaMemcpyFromSymbol(&stats.next_seed.state, dev_next_state, sizeof(dev_next_state)));
+	stats.next_seed.inc = params.seed.inc;
+	return stats;
+}
+statistics benchmark_multilinear_vec4(const parameters& params)
+{
+	cuda_timer timer;
+	statistics stats;
+	stats.blocks = params.total_threads / params.threads_per_block;
+	timer.start();
+	multilinear_vec4<<<stats.blocks, params.threads_per_block>>>(params.dev_arr, params.seed, bfind(params.total_threads), params.numbers);
 	CTE(cudaGetLastError());
 	timer.end();
 	stats.calculation_time = timer.wait_and_get_elapsed_time();
@@ -81,12 +109,21 @@ statistics benchmark_multilinear_vec(const parameters& params)
 	return stats;
 }
 
-__global__ void throughput(uint32_t* const dev_arr, pcg32_random_t seed)
+__global__ void throughput_scal(uint32_t* const dev_arr, pcg32_random_t seed)
 {
 	unsigned index = threadIdx.x + blockIdx.x * blockDim.x;
 	dev_arr[index] = (uint32_t)(index * seed.state + seed.inc);
 }
-__global__ void throughput_vec(uint32_t* const dev_arr, pcg32_random_t seed)
+__global__ void throughput_vec2(uint32_t* const dev_arr, pcg32_random_t seed)
+{
+	unsigned index = threadIdx.x + blockIdx.x * blockDim.x;
+	unsigned i = index * 2;
+	uint2 res;
+	res.x = (uint32_t)((i + 0) * seed.state + seed.inc);
+	res.y = (uint32_t)((i + 1) * seed.state + seed.inc);
+	((uint2*)dev_arr)[index] = res;
+}
+__global__ void throughput_vec4(uint32_t* const dev_arr, pcg32_random_t seed)
 {
 	unsigned index = threadIdx.x + blockIdx.x * blockDim.x;
 	unsigned i = index * 4;
@@ -98,7 +135,7 @@ __global__ void throughput_vec(uint32_t* const dev_arr, pcg32_random_t seed)
 	((uint4*)dev_arr)[index] = res;
 }
 
-__global__ void multilinear(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers)
+__global__ void multilinear_scal(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers)
 {
 	int64_t index = threadIdx.x + blockIdx.x * (int64_t)blockDim.x;
 	{
@@ -125,7 +162,39 @@ __global__ void multilinear(uint32_t* const dev_arr, pcg32_random_t seed, const 
 	if (index == numbers)
 		dev_next_state = seed.state;
 }
-__global__ void multilinear_vec(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers)
+__global__ void multilinear_vec2(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers)
+{
+	int64_t index = threadIdx.x + blockIdx.x * (int64_t)blockDim.x;
+	{
+		uint64_t acc_mult = seed.state;
+		uint64_t acc_plus = 0;
+		int64_t exp = index;
+		for (int it = 1; exp != 0; it++, exp >>= 1)
+		{
+			if (exp & 1)
+			{
+				acc_mult = acc_mult * dev_const_mul[it];
+				acc_plus = acc_plus * dev_const_mul[it] + dev_const_inc[it];
+			}
+		}
+		seed.state = acc_mult + seed.inc * acc_plus;
+	}
+	const int step = 1U << threads_log2;
+	while (index * 2 < numbers)
+	{
+		uint2 res;
+		uint64_t temp = seed.state;
+		res.x = pcg32_xsr(temp);
+		temp = temp * PCG32_MAGIC + seed.inc;
+		res.y = pcg32_xsr(temp);
+		((uint2*)dev_arr)[index] = res;
+		seed.state = seed.state * dev_const_mul[threads_log2 + 1] + seed.inc * dev_const_inc[threads_log2 + 1];
+		index += step;
+	}
+	if (index * 2 == numbers)
+		dev_next_state = seed.state;
+}
+__global__ void multilinear_vec4(uint32_t* const dev_arr, pcg32_random_t seed, const unsigned threads_log2, const size_t numbers)
 {
 	int64_t index = threadIdx.x + blockIdx.x * (int64_t)blockDim.x;
 	{

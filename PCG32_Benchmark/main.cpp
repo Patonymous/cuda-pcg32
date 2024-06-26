@@ -14,18 +14,18 @@ using namespace std;
 
 constexpr uint64_t seed_states[] = { 42, 2809200318112002, 0xAAAABBBBCCCCDDDDULL, };
 constexpr uint64_t seed_increments[] = { 54, 1811200228092003, 0xCCCCBBBBAAAADDDDULL, };
-constexpr unsigned threads_per_block[] = { 64, 128, 256, }; // only powers of 2
+constexpr unsigned threads_per_block[] = { 64, 128, 256, 512, }; // only powers of 2
 
 constexpr size_t seed_combinations = ARR_SIZE(seed_states) * ARR_SIZE(seed_increments);
 
 struct _config
 {
-	static constexpr int numbers_hard_min = 10;
+	static constexpr int numbers_hard_min = 12;
 	static constexpr int numbers_hard_max = 32;
 	static constexpr int numbers_default_step = 2;
-	static constexpr int threads_hard_min = 8; 
+	static constexpr int threads_hard_min = 10; 
 	static constexpr int threads_hard_max = 30;
-	static constexpr int threads_default_step = 1;
+	static constexpr int threads_default_step = 2;
 
 	const char* series_name = "";
 	inline string throughput_filename() { return ((string("benchmark_throughput") + ('\0' == *series_name ? "" : "_")) + series_name) + ".csv"; }
@@ -46,24 +46,29 @@ struct _config
 	int threads_step_log2 = threads_default_step;
 } config;
 
-void run_gpu(statistics(*benchmark)(const parameters&), bool(*is_correct)(parameters, const statistics&, uint32_t*), const parameters& params, statistics& stats, uint32_t* host_arr)
+void run_gpu(statistics(*benchmark)(const parameters&), bool(*is_correct)(parameters, const statistics&, uint32_t*), parameters params, statistics& stats, uint32_t* host_arr)
 {
-	CTE(cudaGetLastError());
-	if (config.checks)
-		CTE(cudaMemset(params.dev_arr, 0, params.numbers * sizeof(uint32_t)));
-	auto now = benchmark(params);
-	if (config.checks)
+	for (int s = 0; s < ARR_SIZE(seed_states); s++)
 	{
-		CTE(cudaMemcpy(host_arr, params.dev_arr, params.numbers * sizeof(uint32_t), cudaMemcpyDeviceToHost));
-		stats.correct = stats.correct && is_correct(params, now, host_arr);
+		for (int i = 0; i < ARR_SIZE(seed_increments); i++)
+		{
+			pcg32_srandom_r(&params.seed, seed_states[s], seed_increments[i]);
+
+			if (config.checks)
+				CTE(cudaMemset(params.dev_arr, 0, params.numbers * sizeof(uint32_t)));
+			auto now = benchmark(params);
+			if (config.checks)
+			{
+				CTE(cudaMemcpy(host_arr, params.dev_arr, params.numbers * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+				stats.correct = stats.correct && is_correct(params, now, host_arr);
+			}
+			stats.calculation_time += now.calculation_time;
+			if (stats.blocks == 0)
+				stats.blocks = now.blocks;
+			else if (stats.blocks != now.blocks)
+				throw message_exception("Block counts of different runs with the same parameters don't match");
+		}
 	}
-	stats.calculation_time += now.calculation_time;
-	stats.next_seed = now.next_seed;
-	if (stats.blocks == 0)
-		stats.blocks = now.blocks;
-	else if (stats.blocks != now.blocks)
-		throw message_exception("Block counts of different runs with the same parameters don't match");
-	stats.next_seed = stats.next_seed;
 }
 
 bool is_correct_throughput(parameters params, const statistics& stats, uint32_t* host_arr)
@@ -230,12 +235,14 @@ int throwing_main(int argc, const char* argv[])
 	if (config.checks && !(cuda_malloc_host = (cudaMallocHost(&host_arr, config.test_arr_size_in_bytes()) == cudaSuccess)))
 	{
 		cout << "WARNING: Unable to allocate pinned memory, using normal memory" << endl;
-		host_arr = (uint32_t*)malloc(config.test_arr_size_in_bytes());
+		if (!(host_arr = (uint32_t*)malloc(config.test_arr_size_in_bytes())))
+			throw message_exception("Unable to allocate host memory");
 	}
 	CTE(cudaMalloc(&params.dev_arr, config.test_arr_size_in_bytes()));
 
 	cout << "Measuring throughput..." << endl;
 	tabs++;
+	bool warmup = true;
 	open_as_configured(file, config.throughput_filename());
 	for (int n = config.numbers_min_log2; n <= config.numbers_max_log2; n += config.numbers_step_log2)
 	{
@@ -246,21 +253,32 @@ int throwing_main(int argc, const char* argv[])
 			params.threads_per_block = threads_per_block[t];
 			cout << tabs << "With " << params.threads_per_block << " threads per block..." << endl;
 
-			statistics classic, vectorized;
-			for (int s = 0; s < ARR_SIZE(seed_states); s++)
+			if (warmup)
 			{
-				for (int i = 0; i < ARR_SIZE(seed_increments); i++)
-				{
-					pcg32_srandom_r(&params.seed, seed_states[s], seed_increments[i]);
-
-					run_gpu(benchmark_throughput, is_correct_throughput, params, classic, host_arr);
-					run_gpu(benchmark_throughput_vec, is_correct_throughput, params, vectorized, host_arr);
-				}
+				benchmark_throughput_vec4(params);
+				benchmark_throughput_vec2(params);
+				benchmark_throughput_scal(params);
+				warmup = false;
 			}
-			classic.calculation_time /= seed_combinations;
-			vectorized.calculation_time /= seed_combinations;
-			save(file, "Throughput", params, classic);
-			save(file, "Throughput V.", params, vectorized);
+
+			statistics scalar, vectorized2, vectorized4;
+			switch (params.numbers / params.threads_per_block) // result is a power of 2
+			{
+			default: // 4 or more
+				run_gpu(benchmark_throughput_vec4, is_correct_throughput, params, vectorized4, host_arr);
+				vectorized4.calculation_time /= seed_combinations;
+				save(file, "Throughput Vec4", params, vectorized4);
+			case 2:
+				run_gpu(benchmark_throughput_vec2, is_correct_throughput, params, vectorized2, host_arr);
+				vectorized2.calculation_time /= seed_combinations;
+				save(file, "Throughput Vec2", params, vectorized2);
+			case 1:
+				run_gpu(benchmark_throughput_scal, is_correct_throughput, params, scalar, host_arr);
+				scalar.calculation_time /= seed_combinations;
+				save(file, "Throughput Scal", params, scalar);
+			case 0:
+				break;
+			}
 		}
 		tabs--;
 	}
@@ -272,6 +290,7 @@ int throwing_main(int argc, const char* argv[])
 
 	cout << "Performing multi-linear benchmarks..." << endl;
 	tabs++;
+	warmup = true;
 	open_as_configured(file, config.multilinear_filename());
 	for (int n = config.numbers_min_log2; n <= config.numbers_max_log2; n += config.numbers_step_log2)
 	{
@@ -284,23 +303,36 @@ int throwing_main(int argc, const char* argv[])
 			for (int tt = config.threads_min_log2; tt <= config.threads_max_log2 && tt <= n - 2; tt += config.threads_step_log2)
 			{
 				params.total_threads = 1ULL << tt;
-				cout << tabs << "With 2^" << tt << " total threads..." << endl;
+				if (params.threads_per_block > params.total_threads)
+					continue;
+				cout << tabs << "With 2^" << tt << " threads in total..." << endl;
 
-				statistics classic, vectorized;
-				for (int s = 0; s < ARR_SIZE(seed_states); s++)
+				if (warmup)
 				{
-					for (int i = 0; i < ARR_SIZE(seed_increments); i++)
-					{
-						pcg32_srandom_r(&params.seed, seed_states[s], seed_increments[i]);
-
-						run_gpu(benchmark_multilinear, is_correct_pcg32, params, classic, host_arr);
-						run_gpu(benchmark_multilinear_vec, is_correct_pcg32, params, vectorized, host_arr);
-					}
+					benchmark_multilinear_vec4(params);
+					benchmark_multilinear_vec2(params);
+					benchmark_multilinear_scal(params);
+					warmup = false;
 				}
-				classic.calculation_time /= seed_combinations;
-				vectorized.calculation_time /= seed_combinations;
-				save(file, "Multilinear", params, classic);
-				save(file, "Multilinear V.", params, vectorized);
+
+				statistics scalar, vectorized2, vectorized4;
+				switch (params.numbers / params.threads_per_block) // result is a power of 2
+				{
+				default: // 4 or more
+					run_gpu(benchmark_multilinear_vec4, is_correct_pcg32, params, vectorized4, host_arr);
+					vectorized4.calculation_time /= seed_combinations;
+					save(file, "Multilinear Vec4", params, vectorized4);
+				case 2:
+					run_gpu(benchmark_multilinear_vec2, is_correct_pcg32, params, vectorized2, host_arr);
+					vectorized2.calculation_time /= seed_combinations;
+					save(file, "Multilinear Vec2", params, vectorized2);
+				case 1:
+					run_gpu(benchmark_multilinear_scal, is_correct_pcg32, params, scalar, host_arr);
+					scalar.calculation_time /= seed_combinations;
+					save(file, "Multilinear Scal", params, scalar);
+				case 0:
+					break;
+				}
 			}
 			tabs--;
 		}

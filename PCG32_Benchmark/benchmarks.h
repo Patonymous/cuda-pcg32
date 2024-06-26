@@ -24,7 +24,9 @@ struct statistics
 
 void initialize_constants();
 
-statistics benchmark_throughput(const parameters& params);
-statistics benchmark_throughput_vec(const parameters& params);
-statistics benchmark_multilinear(const parameters& params);
-statistics benchmark_multilinear_vec(const parameters& params);
+statistics benchmark_throughput_scal(const parameters& params);
+statistics benchmark_throughput_vec2(const parameters& params);
+statistics benchmark_throughput_vec4(const parameters& params);
+statistics benchmark_multilinear_scal(const parameters& params);
+statistics benchmark_multilinear_vec4(const parameters& params);
+statistics benchmark_multilinear_vec2(const parameters& params);
